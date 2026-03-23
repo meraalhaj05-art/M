@@ -7,19 +7,18 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Transaction;
 use App\Models\Voucher;
-use App\Models\Setting;
 use Illuminate\Support\Facades\Http;
 
 class TelegramController extends Controller {
 
-    // --- الإعدادات الأساسية (عدلها من هون) ---
-    protected $botToken = "7154942055:AAH3k_X7N0S8D8C8D8C8D8C8D8C8D8C"; // توكن البوت
-    protected $adminChatId = "5593775415"; // آيدي التلجرام تبعك (الأدمن)
+    // --- الإعدادات (حط بياناتك هون) ---
+    protected $botToken = "7154942055:AAH3k_X7N0S8D8C8D8C8D8C8D8C8D8C"; 
+    protected $adminChatId = "5593775415"; 
 
     public function handle(Request $request) {
         $update = $request->all();
 
-        // 1. معالجة أزرار القبول/الرفض (Callback)
+        // معالجة الأزرار (Callback)
         if (isset($update['callback_query'])) {
             return $this->handleCallback($update['callback_query']);
         }
@@ -27,58 +26,140 @@ class TelegramController extends Controller {
         if (!isset($update['message'])) return;
         $message = $update['message'];
         $chatId = $message['chat']['id'];
+        $text = $message['text'] ?? '';
 
-        // 2. فحص الاشتراك الإجباري (إلا للأدمن)
-        if ($chatId != $this->adminChatId && !$this->checkSubscription($chatId)) {
-            $btn = json_encode(['inline_keyboard' => [[['text' => "📢 اشترك هنا", 'url' => 'https://t.me/YOUR_CHANNEL']]]]);
-            return $this->sendMessage($chatId, "⚠️ **عذراً!** يجب عليك الاشتراك في القناة أولاً لاستخدام البوت.", $btn);
-        }
-
-        // 3. البحث عن المستخدم أو تسجيله
+        // تسجيل المستخدم أو جلبه
         $user = User::firstOrCreate(
             ['telegram_id' => $chatId],
             ['balance' => 0, 'referral_code' => 'REF' . $chatId, 'step' => 'none']
         );
 
-        // 4. معالجة الصور (إثباتات الشحن)
+        // معالجة الصور (إثباتات الشحن)
         if (isset($message['photo'])) {
             return $this->handlePhoto($user, $message);
         }
 
-        // 5. معالجة النصوص والأوامر
-        if (isset($message['text'])) {
-            $text = $message['text'];
+        // نظام الحالات (Steps)
+        if ($user->step !== 'none') {
+            return $this->handleSteps($user, $text);
+        }
 
-            // نظام الحالات (Steps)
-            if ($user->step !== 'none') {
-                return $this->handleSteps($user, $text);
-            }
+        // الأوامر الرئيسية
+        if (strpos($text, '/start') === 0) {
+            return $this->processStart($user, $text);
+        }
 
-            // الأوامر البرمجية
-            switch ($text) {
-                case '/start': return $this->sendWelcome($user);
-                case '/admin': return ($chatId == $this->adminChatId) ? $this->adminPanel($chatId) : null;
-                case '⚡ حساب ايشانسي وشحنه ⚡': return $this->ichanceyMenu($user);
-                case '📥 شحن رصيد في البوت': return $this->depositMethods($chatId);
-                case '📤 سحب رصيد من البوت': return $this->withdrawMenu($chatId);
-                case '🎁 إهداء صديق': 
-                    $user->update(['step' => 'gift_id']);
-                    return $this->sendMessage($chatId, "🎁 أرسل آيدي (ID) الصديق:");
-                case '🏆 كود جائزة': 
-                    $user->update(['step' => 'use_code']);
-                    return $this->sendMessage($chatId, "🏆 أدخل كود الجائزة:");
-                case '💰 الإحالات': return $this->referralInfo($user);
-                case '💬 إرسال رسالة للدعم': return $this->sendMessage($chatId, "👨‍💻 للدعم الفني: @YOUR_SUPPORT_ID");
-                case '↗️ ايشانسي': return $this->sendMessage($chatId, "الموقع الرسمي: www.ichancey.com");
-                default: return $this->sendWelcome($user);
-            }
+        switch ($text) {
+            case '/admin': 
+                return ($chatId == $this->adminChatId) ? $this->adminPanel($chatId) : null;
+            case '⚡ حساب ايشانسي وشحنه ⚡': return $this->ichanceyMenu($user);
+            case '📥 شحن رصيد في البوت': return $this->depositMenu($chatId);
+            case '📤 سحب رصيد من البوت': 
+                $user->update(['step' => 'withdraw_method']);
+                return $this->sendMessage($chatId, "📤 اختر وسيلة السحب وأرسل التفاصيل (رقم الكاش أو عنوان المحفظة):");
+            case '🎁 إهداء صديق': 
+                $user->update(['step' => 'gift_id']);
+                return $this->sendMessage($chatId, "🎁 أرسل آيدي (ID) الصديق الذي تريد إهداءه:");
+            case '🏆 كود جائزة': 
+                $user->update(['step' => 'use_code']);
+                return $this->sendMessage($chatId, "🏆 أدخل كود الجائزة الخاص بك:");
+            case '💰 الإحالات': return $this->referralInfo($user);
+            case '💬 إرسال رسالة للدعم': return $this->sendMessage($chatId, "👨‍💻 للتواصل مع الدعم الفني: @YOUR_ID");
+            case '↗️ ايشانسي': return $this->sendMessage($chatId, "الموقع الرسمي: www.ichancey.com");
+            case '⚠️ شروط الاستخدام': return $this->sendMessage($chatId, "📜 هنا تكتب شروط البوت الخاصة بك...");
+            default: return $this->sendWelcome($user);
         }
     }
 
-    // --- الدوال الأساسية للبوت ---
+    // --- منطق الإحالات والبدء ---
+    private function processStart($user, $text) {
+        $parts = explode(' ', $text);
+        if (count($parts) > 1 && $user->wasRecentlyCreated) {
+            $refId = str_replace('REF', '', $parts[1]);
+            $user->update(['referrer_id' => $refId]);
+            $this->sendMessage($refId, "🔔 مستخدم جديد دخل عبر رابطك!");
+        }
+        return $this->sendWelcome($user);
+    }
+
+    // --- نظام معالجة الخطوات (The Brain) ---
+    private function handleSteps($user, $text) {
+        // إذاعة رسالة (للأدمن فقط)
+        if ($user->step == 'waiting_broadcast' && $user->telegram_id == $this->adminChatId) {
+            $allUsers = User::all();
+            foreach ($allUsers as $u) { $this->sendMessage($u->telegram_id, "📢 **إعلان هام:**\n\n" . $text); }
+            $user->update(['step' => 'none']);
+            return $this->sendMessage($this->adminChatId, "✅ تم الإرسال لـ " . $allUsers->count() . " مستخدم.");
+        }
+
+        // سحب الرصيد
+        if ($user->step == 'withdraw_method') {
+            $user->update(['pending_details' => $text, 'step' => 'withdraw_amount']);
+            return $this->sendMessage($user->telegram_id, "💰 كم المبلغ الذي تريد سحبه؟");
+        }
+        if ($user->step == 'withdraw_amount') {
+            $amount = (float)$text;
+            if ($amount > $user->balance) {
+                $user->update(['step' => 'none']);
+                return $this->sendMessage($user->telegram_id, "❌ رصيدك غير كافٍ!");
+            }
+            Transaction::create(['user_id' => $user->telegram_id, 'type' => 'withdraw', 'amount' => $amount, 'details' => $user->pending_details, 'status' => 'pending']);
+            $user->update(['step' => 'none']);
+            $this->sendMessage($this->adminChatId, "📤 طلب سحب جديد بقيمة $amount من $user->telegram_id");
+            return $this->sendMessage($user->telegram_id, "⏳ تم تقديم الطلب بنجاح.");
+        }
+
+        // إهداء صديق
+        if ($user->step == 'gift_id') {
+            $user->update(['pending_details' => $text, 'step' => 'gift_amount']);
+            return $this->sendMessage($user->telegram_id, "💰 كم المبلغ؟ (الأدنى 22,000)");
+        }
+        if ($user->step == 'gift_amount') {
+            $amount = (float)$text;
+            $target = User::where('telegram_id', $user->pending_details)->first();
+            if ($amount >= 22000 && $user->balance >= $amount && $target) {
+                $user->decrement('balance', $amount);
+                $target->increment('balance', $amount);
+                $user->update(['step' => 'none']);
+                $this->sendMessage($target->telegram_id, "🎁 مبروك! وصلتك هدية بقيمة $amount SYP");
+                return $this->sendMessage($user->telegram_id, "✅ تم الإرسال بنجاح.");
+            }
+            $user->update(['step' => 'none']);
+            return $this->sendMessage($user->telegram_id, "❌ فشلت العملية.");
+        }
+
+        $user->update(['step' => 'none']);
+    }
+
+    // --- لوحة التحكم والوظائف الأخرى ---
+    private function adminPanel($chatId) {
+        $keys = json_encode(['inline_keyboard' => [[['text' => "📢 إذاعة رسالة", 'callback_data' => "admin_broadcast"]]]]);
+        return $this->sendMessage($chatId, "🛠 لوحة تحكم الأدمن:", $keys);
+    }
+
+    private function referralInfo($user) {
+        $count = User::where('referrer_id', $user->telegram_id)->count();
+        $link = "https://t.me/YourBotUser?start=REF" . $user->telegram_id;
+        $text = "💰 **نظام الإحالات**\n👥 المدعوين: $count\n🔗 رابطك: `$link`";
+        return $this->sendMessage($user->telegram_id, $text);
+    }
+
+    private function handleCallback($callback) {
+        $data = $callback['data'];
+        if ($data == 'admin_broadcast') {
+            User::where('telegram_id', $this->adminChatId)->update(['step' => 'waiting_broadcast']);
+            return $this->sendMessage($this->adminChatId, "📣 أرسل نص الرسالة للإذاعة:");
+        }
+    }
+
+    private function sendMessage($chatId, $text, $keyboard = null) {
+        return Http::post("https://api.telegram.org/bot{$this->botToken}/sendMessage", [
+            'chat_id' => $chatId, 'text' => $text, 'parse_mode' => 'HTML', 'reply_markup' => $keyboard
+        ]);
+    }
 
     private function sendWelcome($user) {
-        $text = "🎯 **معلومات الرصيد**\n\nالرصيد الحالي: **{$user->balance} SYP**\nأيدي حسابك: `{$user->telegram_id}`";
+        $text = "🎯 **معلومات الرصيد**\n💰 رصيدك: **{$user->balance} SYP**\n🆔 آيديك: `{$user->telegram_id}`";
         return $this->sendMessage($user->telegram_id, $text, $this->mainKeyboard());
     }
 
@@ -91,95 +172,5 @@ class TelegramController extends Controller {
             [['text' => "💬 إرسال رسالة للدعم"]],
             [['text' => "↗️ ايشانسي"], ['text' => "⚠️ شروط الاستخدام"]]
         ], 'resize_keyboard' => true]);
-    }
-
-    private function handleSteps($user, $text) {
-        // إنشاء حساب إيشانسي
-        if ($user->step == 'create_ich_user') {
-            $user->update(['ichancey_username' => $text, 'step' => 'create_ich_pass']);
-            return $this->sendMessage($user->telegram_id, "🔐 أرسل كلمة المرور:");
-        }
-        if ($user->step == 'create_ich_pass') {
-            $user->update(['ichancey_password' => $text, 'step' => 'none']);
-            return $this->sendMessage($user->telegram_id, "✅ تم ربط حساب إيشانسي بنجاح.");
-        }
-
-        // إهداء صديق
-        if ($user->step == 'gift_id') {
-            $user->update(['pending_details' => $text, 'step' => 'gift_amount']);
-            return $this->sendMessage($user->telegram_id, "💰 كم المبلغ؟ (الأدنى 22,000)");
-        }
-        if ($user->step == 'gift_amount') {
-            $amount = (float)$text;
-            if ($amount >= 22000 && $user->balance >= $amount) {
-                $target = User::where('telegram_id', $user->pending_details)->first();
-                if ($target) {
-                    $user->decrement('balance', $amount);
-                    $target->increment('balance', $amount);
-                    $user->update(['step' => 'none']);
-                    $this->sendMessage($target->telegram_id, "🎁 وصلتك هدية بقيمة $amount SYP!");
-                    return $this->sendMessage($user->telegram_id, "✅ تم الإرسال.");
-                }
-            }
-            $user->update(['step' => 'none']);
-            return $this->sendMessage($user->telegram_id, "❌ فشل الإهداء (رصيد غير كافٍ أو آيدي خطأ).");
-        }
-
-        // استخدام كود جائزة
-        if ($user->step == 'use_code') {
-            $v = Voucher::where('code', $text)->first();
-            if ($v && $v->used_count < $v->max_uses) {
-                $user->increment('balance', $v->amount);
-                $v->increment('used_count');
-                $user->update(['step' => 'none']);
-                return $this->sendMessage($user->telegram_id, "🎉 ربحت {$v->amount} SYP!");
-            }
-            $user->update(['step' => 'none']);
-            return $this->sendMessage($user->telegram_id, "❌ الكود منتهي أو خاطئ.");
-        }
-    }
-
-    private function handlePhoto($user, $message) {
-        $fileId = end($message['photo'])['file_id'];
-        $trx = Transaction::create(['user_id' => $user->telegram_id, 'type' => 'deposit', 'amount' => 0, 'proof_image' => $fileId, 'status' => 'pending']);
-        
-        $caption = "🔔 **طلب شحن جديد!**\n🆔: `{$user->telegram_id}`\nراجع الصورة ثم حدد الإجراء:";
-        $keyboard = json_encode(['inline_keyboard' => [[
-            ['text' => "✅ قبول", 'callback_data' => "approve_{$trx->id}"],
-            ['text' => "❌ رفض", 'callback_data' => "reject_{$trx->id}"]
-        ]]]);
-        return $this->sendPhotoToAdmin($fileId, $caption, $keyboard);
-    }
-
-    private function handleCallback($callback) {
-        $data = $callback['data'];
-        $trxId = explode('_', $data)[1];
-        $trx = Transaction::find($trxId);
-        $target = User::where('telegram_id', $trx->user_id)->first();
-
-        if (str_contains($data, 'approve')) {
-            // ملاحظة: هنا الأدمن يحدد المبلغ يدوياً بطلب آخر أو نثبت مبلغ
-            $target->increment('balance', 50000); // مثال: شحن 50 ألف
-            $trx->update(['status' => 'approved']);
-            $this->sendMessage($target->telegram_id, "✅ تم قبول طلب الشحن.");
-        } else {
-            $trx->update(['status' => 'rejected']);
-            $this->sendMessage($target->telegram_id, "❌ تم رفض طلب الشحن.");
-        }
-        return Http::post("https://api.telegram.org/bot{$this->botToken}/answerCallbackQuery", ['callback_query_id' => $callback['id'], 'text' => "تم التنفيذ"]);
-    }
-
-    // --- وظائف مساعدة ---
-    private function sendMessage($chatId, $text, $keyboard = null) {
-        return Http::post("https://api.telegram.org/bot{$this->botToken}/sendMessage", ['chat_id' => $chatId, 'text' => $text, 'parse_mode' => 'HTML', 'reply_markup' => $keyboard]);
-    }
-
-    private function sendPhotoToAdmin($fileId, $caption, $keyboard) {
-        return Http::post("https://api.telegram.org/bot{$this->botToken}/sendPhoto", ['chat_id' => $this->adminChatId, 'photo' => $fileId, 'caption' => $caption, 'reply_markup' => $keyboard]);
-    }
-
-    private function checkSubscription($chatId) {
-        // يمكنك تفعيل الفحص الحقيقي هنا بـ getChatMember
-        return true; 
     }
 }
