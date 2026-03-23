@@ -12,9 +12,9 @@ use Illuminate\Support\Facades\Http;
 class TelegramController extends Controller {
 
     // --- الإعدادات (حط بياناتك هون) ---
-    protected $botToken = "7154942055:AAH3k_X7N0S8D8C8D8C8D8C8D8C8D8C"; 
-    protected $adminChatId = "5593775415"; 
-
+    
+protected $botToken = "8634873247:AAE5hVbQ6MuB0yVhpMpC7VLuBzPjxupXujs";
+protected $adminChatId = "8583775415";
     public function handle(Request $request) {
         $update = $request->all();
 
