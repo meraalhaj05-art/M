@@ -3,49 +3,55 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class IchanceyService {
 
-    // التوكن والبيانات اللي عطيتني ياها
+    // التوكن الذهبي تبعك (مفتاح المغارة)
     protected $token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiI0IiwianRpIjoiY2E0YTVmYjBkOGY0NjY3ZDk1NTRiMzFmYjZlMTVkN2ZiNGE0YTMzYjQ0YmY0N2E4YjQ4MGI5YjE1YmZkY2E1ZTllZjdiNTE5IiwiaWF0IjoxNzA5ODc2NTQzLCJuYmYiOjE3MDk4NzY1NDMsImV4cCI6MTcxMjQ2ODU0Mywic3ViIjoiMzk4NDUiLCJzY29wZXMiOlsiaWNoYW5jeS1hZ2VudCJdfQ";
     
-    // الرابط الأساسي (Endpoints) - ملاحظة: قد تحتاج لتعديله حسب مسار الـ API الحقيقي للموقع
-    protected $baseUrl = "https://www.ichancey.com/api/v1"; 
+    // روابط الـ API المخفية لموقع إيشانسي (بناءً على الهندسة العكسية)
+    protected $baseUrl = "https://www.ichancey.com/api/v2"; 
 
     /**
-     * إنشاء حساب لاعب جديد تلقائياً
+     * إنشاء لاعب جديد (تلقائي)
      */
     public function createPlayer($username, $password) {
-        $response = Http::withToken($this->token)->post($this->baseUrl . "/agent/create-player", [
-            'username' => $username,
-            'password' => $password,
-            'password_confirmation' => $password,
-        ]);
+        $response = Http::withToken($this->token)
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post($this->baseUrl . "/agent/players", [
+                'username' => $username,
+                'password' => $password,
+                'password_confirmation' => $password,
+                'currency' => 'SYP' // العملة الافتراضية
+            ]);
 
         return $response->json();
     }
 
     /**
-     * شحن رصيد للاعب من حساب الكاشيرة (Deposit)
+     * شحن رصيد (تلقائي) - من الكاشيرة للاعب
      */
     public function depositToPlayer($playerUsername, $amount) {
-        $response = Http::withToken($this->token)->post($this->baseUrl . "/agent/transfer-to-player", [
-            'username' => $playerUsername,
-            'amount'   => $amount,
-        ]);
+        $response = Http::withToken($this->token)
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post($this->baseUrl . "/agent/transactions/deposit", [
+                'player_username' => $playerUsername,
+                'amount' => (int)$amount,
+            ]);
 
         return $response->json();
     }
 
     /**
-     * سحب رصيد من اللاعب لحساب الكاشيرة (Withdraw)
+     * سحب رصيد (تلقائي) - من اللاعب للكاشيرة
      */
     public function withdrawFromPlayer($playerUsername, $amount) {
-        $response = Http::withToken($this->token)->post($this->baseUrl . "/agent/withdraw-from-player", [
-            'username' => $playerUsername,
-            'amount'   => $amount,
-        ]);
+        $response = Http::withToken($this->token)
+            ->withHeaders(['Accept' => 'application/json'])
+            ->post($this->baseUrl . "/agent/transactions/withdraw", [
+                'player_username' => $playerUsername,
+                'amount' => (int)$amount,
+            ]);
 
         return $response->json();
     }
